@@ -24,7 +24,7 @@ export type Workspace = {
   description: string | null;
   ownerId: string;
   owner?: User;
-  members?: WorkspaceMember[];
+  members: WorkspaceMember[];
   createdAt: string;
   updatedAt: string;
 };
