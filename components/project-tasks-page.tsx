@@ -13,6 +13,8 @@ type TaskForm = {
   priority: TaskPriority;
   dueDate: string;
   parentTaskId: string;
+  assigneeId: string;
+
 };
 
 type TaskMeta = PaginatedResult<Task>["meta"];
@@ -27,6 +29,7 @@ const defaultTaskForm: TaskForm = {
   priority: "MEDIUM",
   dueDate: "",
   parentTaskId: "",
+  assigneeId: ""
 };
 
 const taskStatuses: TaskStatus[] = ["TODO", "IN_PROGRESS", "IN_REVIEW", "DONE"];
@@ -48,6 +51,8 @@ export function ProjectTasksPage({ workspaceId, projectId }: { workspaceId: stri
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [members, setMembers] = useState<User[]>([]);
+
 
   const taskTree = useMemo(() => buildTaskTree(tasks), [tasks]);
   const flatTaskOptions = useMemo(() => flattenTaskTree(taskTree), [taskTree]);
@@ -102,6 +107,7 @@ export function ProjectTasksPage({ workspaceId, projectId }: { workspaceId: stri
           apiRequest<Workspace>(`/api/v1/workspaces/${workspaceId}`, { method: "GET" }, storedToken),
           apiRequest<Project>(`/api/v1/workspaces/${workspaceId}/projects/${projectId}`, { method: "GET" }, storedToken),
           apiRequest<Task[] | PaginatedResult<Task>>(`/api/v1/workspaces/${workspaceId}/projects/${projectId}/tasks?page=1&limit=${limit}`, { method: "GET" }, storedToken),
+
         ]);
 
         if (!isMounted) return;
@@ -109,6 +115,7 @@ export function ProjectTasksPage({ workspaceId, projectId }: { workspaceId: stri
         setUser(me);
         setWorkspace(workspacePayload);
         setProject(projectPayload);
+        setMembers(workspacePayload.members?.map((member) => member.user).filter((user): user is User => Boolean(user)) ?? []);
         if (Array.isArray(tasksPayload)) {
           setTasks(tasksPayload);
           setMeta({ total: tasksPayload.length, page: 1, limit, totalPages: Math.max(1, Math.ceil(tasksPayload.length / limit)) });
@@ -171,6 +178,7 @@ export function ProjectTasksPage({ workspaceId, projectId }: { workspaceId: stri
           dueDate: form.dueDate ? new Date(form.dueDate).toISOString() : null,
           parentTaskId: form.parentTaskId || null,
           position: meta.total + 1,
+          assigneeId: form.assigneeId || null
         }),
       }, token);
 
@@ -212,7 +220,15 @@ export function ProjectTasksPage({ workspaceId, projectId }: { workspaceId: stri
           {statusCounts.map((item) => <div key={item.status} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-3xl font-black">{item.count}</p><p className="mt-1 text-xs font-black uppercase tracking-[0.2em] text-slate-400">{formatStatus(item.status)}</p></div>)}
         </div>
 
-        {showForm && <TaskFormPanel form={form} taskOptions={flatTaskOptions} isSubmitting={isSubmitting} setForm={setForm} onCancel={() => { setShowForm(false); setForm(defaultTaskForm); }} onSubmit={submitTask} />}
+        {showForm && <TaskFormPanel
+          form={form}
+          taskOptions={flatTaskOptions}
+          isSubmitting={isSubmitting}
+          setForm={setForm}
+          onCancel={() => { setShowForm(false); setForm(defaultTaskForm); }}
+          onSubmit={submitTask}
+          members={members}
+        />}
 
         <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-xl shadow-slate-200/70">
           <div className="flex flex-col gap-4 border-b border-slate-200 bg-slate-950 p-5 text-white md:flex-row md:items-center md:justify-between">
@@ -237,22 +253,67 @@ export function ProjectTasksPage({ workspaceId, projectId }: { workspaceId: stri
   );
 }
 
-function TaskFormPanel({ form, taskOptions, isSubmitting, setForm, onCancel, onSubmit }: { form: TaskForm; taskOptions: Array<{ id: string; title: string; depth: number }>; isSubmitting: boolean; setForm: (form: TaskForm) => void; onCancel: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+function TaskFormPanel({ form, taskOptions, isSubmitting, setForm, onCancel, onSubmit, members }: { form: TaskForm; taskOptions: Array<{ id: string; title: string; depth: number }>; isSubmitting: boolean; setForm: (form: TaskForm) => void; onCancel: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; members: User[] }) {
   return (
     <form onSubmit={onSubmit} className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/70">
       <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-center md:justify-between"><div><p className="text-sm font-bold uppercase tracking-[0.18em] text-blue-600">New task</p><h2 className="text-2xl font-black">{form.parentTaskId ? "Create subtask" : "Create task"}</h2></div><button type="button" onClick={onCancel} className="btn-secondary">Cancel</button></div>
-      <div className="grid gap-4 md:grid-cols-2"><Field label="Title" light><input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} className="input-light" placeholder="Write launch checklist" /></Field><Field label="Parent task" light><select value={form.parentTaskId} onChange={(event) => setForm({ ...form, parentTaskId: event.target.value })} className="input-light"><option value="">None — top-level task</option>{taskOptions.map((task) => <option key={task.id} value={task.id}>{`${"— ".repeat(task.depth)}${task.title}`}</option>)}</select></Field><Field label="Status" light><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as TaskStatus })} className="input-light">{taskStatuses.map((status) => <option key={status} value={status}>{formatStatus(status)}</option>)}</select></Field><Field label="Priority" light><select value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value as TaskPriority })} className="input-light">{taskPriorities.map((priority) => <option key={priority} value={priority}>{priority}</option>)}</select></Field><Field label="Due date" light><input type="date" value={form.dueDate} onChange={(event) => setForm({ ...form, dueDate: event.target.value })} className="input-light" /></Field><Field label="Description" light><textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} className="input-light min-h-28 resize-none" placeholder="Add acceptance criteria or context…" /></Field></div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label="Title" light><input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} className="input-light" placeholder="Write launch checklist" /></Field>
+        <Field label="Parent task" light><select value={form.parentTaskId} onChange={(event) => setForm({ ...form, parentTaskId: event.target.value })} className="input-light"><option value="">None — top-level task</option>{taskOptions.map((task) => <option key={task.id} value={task.id}>{`${"— ".repeat(task.depth)}${task.title}`}</option>)}</select></Field><Field label="Status" light><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as TaskStatus })} className="input-light">{taskStatuses.map((status) => <option key={status} value={status}>{formatStatus(status)}</option>)}</select></Field>
+        <Field label="Priority" light><select value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value as TaskPriority })} className="input-light">{taskPriorities.map((priority) => <option key={priority} value={priority}>{priority}</option>)}</select></Field>
+        <Field label="Due date" light><input type="date" value={form.dueDate} onChange={(event) => setForm({ ...form, dueDate: event.target.value })} className="input-light" /></Field>
+        <Field label="Description" light><textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} className="input-light min-h-28 resize-none" placeholder="Add acceptance criteria or context…" /></Field>
+        {/* 👇 Add this field */}
+        <Field label="Assignee" light>
+          <select
+            value={form.assigneeId}
+            onChange={(event) => setForm({ ...form, assigneeId: event.target.value })}
+            className="input-light"
+          >
+            <option value="">Unassigned</option>
+            {members.map((member) => (
+              <option key={member.id} value={member.id}>
+                {getDisplayName(member)}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
       <button type="submit" disabled={isSubmitting} className="mt-5 btn-primary">{isSubmitting ? "Creating…" : form.parentTaskId ? "Create subtask" : "Create task"}</button>
     </form>
   );
 }
 
 function TaskTable({ tasks, onAddSubtask }: { tasks: TaskNode[]; onAddSubtask: (parentTaskId: string) => void }) {
-  return <div className="overflow-x-auto"><table className="min-w-full text-left"><thead className="bg-slate-50 text-xs font-black uppercase tracking-[0.16em] text-slate-500"><tr><th className="px-5 py-4">Task</th><th className="px-5 py-4">Status</th><th className="px-5 py-4">Priority</th><th className="px-5 py-4">Assignee</th><th className="px-5 py-4">Due</th><th className="px-5 py-4">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{tasks.map((task) => <TaskRow key={task.id} task={task} depth={0} onAddSubtask={onAddSubtask} />)}</tbody></table></div>;
+  return <div className="overflow-x-auto">
+    <table className="min-w-full text-left">
+      <thead className="bg-slate-50 text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+        <tr><th className="px-5 py-4">Task</th><th className="px-5 py-4">Status</th><th className="px-5 py-4">Priority</th><th className="px-5 py-4">Assignee</th>
+          <th className="px-5 py-4">Due</th><th className="px-5 py-4">Actions</th></tr>
+      </thead>
+      <tbody className="divide-y divide-slate-100">{tasks.map((task) => <TaskRow key={task.id} task={task} depth={0} onAddSubtask={onAddSubtask} />)}</tbody>
+    </table>
+  </div>;
 }
 
 function TaskRow({ task, depth, onAddSubtask }: { task: TaskNode; depth: number; onAddSubtask: (parentTaskId: string) => void }) {
-  return <><tr className="align-top transition hover:bg-slate-50"><td className="px-5 py-4"><div style={{ paddingLeft: `${depth * 24}px` }}><div className="flex items-center gap-2"><span className="text-slate-300">{depth > 0 ? "↳" : ""}</span><p className="font-black text-slate-950">{task.title}</p></div><p className="mt-1 max-w-xl text-sm leading-6 text-slate-500">{task.description || "No description."}</p>{task.subtasks.length > 0 && <p className="mt-2 text-xs font-black uppercase tracking-[0.16em] text-blue-500">{task.subtasks.length} subtask{task.subtasks.length === 1 ? "" : "s"}</p>}</div></td><td className="px-5 py-4"><StatusBadge status={task.status} /></td><td className="px-5 py-4"><PriorityBadge priority={task.priority} /></td><td className="px-5 py-4 text-sm font-semibold text-slate-600">{task.assignee ? getDisplayName(task.assignee) : "Unassigned"}</td><td className="px-5 py-4 text-sm font-semibold text-slate-600">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "No due date"}</td><td className="px-5 py-4"><button type="button" onClick={() => onAddSubtask(task.id)} className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-black text-blue-700 transition hover:bg-blue-100">Add subtask</button></td></tr>{task.subtasks.map((subtask) => <TaskRow key={subtask.id} task={subtask} depth={depth + 1} onAddSubtask={onAddSubtask} />)}</>;
+  return <>
+    <tr className="align-top transition hover:bg-slate-50"><td className="px-5 py-4">
+      <div style={{ paddingLeft: `${depth * 24}px` }}>
+        <div className="flex items-center gap-2">
+          <span className="text-slate-300">{depth > 0 ? "↳" : ""}</span>
+          <p className="font-black text-slate-950">{task.title}</p>
+        </div>
+        <p className="mt-1 max-w-xl text-sm leading-6 text-slate-500">{task.description || "No description."}</p>
+        {task.subtasks.length > 0 && <p className="mt-2 text-xs font-black uppercase tracking-[0.16em] text-blue-500">
+          {task.subtasks.length} subtask{task.subtasks.length === 1 ? "" : "s"}</p>}</div></td>
+      <td className="px-5 py-4"><StatusBadge status={task.status} /></td>
+      <td className="px-5 py-4"><PriorityBadge priority={task.priority} /></td>
+      <td className="px-5 py-4 text-sm font-semibold text-slate-600">{task.assignee ? getDisplayName(task.assignee) : "Unassigned"}</td>
+      <td className="px-5 py-4 text-sm font-semibold text-slate-600">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "No due date"}</td>
+      <td className="px-5 py-4"><button type="button" onClick={() => onAddSubtask(task.id)} className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-black text-blue-700 transition hover:bg-blue-100">Add subtask</button></td>
+    </tr>
+    {task.subtasks.map((subtask) => <TaskRow key={subtask.id} task={subtask} depth={depth + 1} onAddSubtask={onAddSubtask} />)}</>;
 }
 
 function Pagination({ meta, page, onPageChange }: { meta: TaskMeta; page: number; onPageChange: (page: number) => Promise<void> }) {
